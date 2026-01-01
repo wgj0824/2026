@@ -3,385 +3,280 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>2026 跨年版</title>
+    <title>2026 跨年 延迟版 wgj</title>
     <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #050002;
-            font-family: "STXingkai", "Xingkai SC", "Kaiti SC", "KaiTi", "Microsoft YaHei", serif;
-            /* 禁止系统手势干扰 */
-            touch-action: none;
-        }
-        canvas {
-            display: block;
-            width: 100vw;
-            height: 100vh;
-        }
+        body { margin: 0; overflow: hidden; background-color: #030001; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
     </style>
 </head>
 <body>
-<canvas id="canvas"></canvas>
+    <canvas id="canvas"></canvas>
 
 <script>
-    /**
-     * 2026 跨年粒子特效 - 移动端适配优化版
-     */
+/**
+ * 2026 跨年粒子特效 - 修复文字可见性 & 增强烟花版
+ */
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
 
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+let width, height, dpr;
+let particles = [];
+let fireworks = [];
+let sparks = [];
 
-    let width, height, dpr;
-    let particles = [];
-    let fireworks = [];
-    let sparks = [];
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-    // 检测是否为移动端
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const CONFIG = {
+    // 稍微增加粒子数量保证文字清晰
+    particleCount: isMobile ? 2500 : 5000, 
+    particleSize: isMobile ? 1.6 : 2,
+    focalLength: 400,
+    pinkPalette: ['#FFB6C1', '#FFC0CB', '#FFE4E1', '#FFF0F5', '#F8C3CD', '#FFFFFF'],
+    fireworkChance: 0.05,
+    gravity: 0.12,
+    friction: 0.96,
+};
 
-    const CONFIG = {
-        // 移动端减少粒子数量以保证流畅度
-        particleCount: isMobile ? 4500 : 8000,
-        particleSize: isMobile ? 1.1 : 1.4,
-        focalLength: 400,
+let stopAllFireworks = false;
 
-        pinkPalette: [
-            '#FFB6C1', '#FFC0CB', '#FFE4E1', '#FFF0F5', '#F8C3CD', '#ffffff'
-        ],
+function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+}
+window.addEventListener('resize', resize);
+resize();
 
-        fireworkChance: 0.08,
-        gravity: 0.08,
-        friction: 0.95
-    };
+// --- 修复后的采样逻辑 ---
+function getTextCoordinates(text, fontSizeMultiplier) {
+    const tempCanvas = document.createElement('canvas');
+    const tCtx = tempCanvas.getContext('2d');
+    
+    // 增大字号基准，确保文字足够粗，不会被采样跳过
+    const dynamicFontSize = Math.min(width * 0.25, height * 0.15) * fontSizeMultiplier;
+    
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+    
+    tCtx.textAlign = 'center';
+    tCtx.textBaseline = 'middle';
+    // 强制使用粗体，保证采样成功率
+    tCtx.font = `bold ${dynamicFontSize}px "STXingkai", "Xingkai SC", "Kaiti SC", "KaiTi", serif`; 
+    tCtx.fillStyle = '#fff';
+    tCtx.fillText(text, width / 2, height / 2);
 
-    let currentTransitionSpeed = 0.1;
+    const imgData = tCtx.getImageData(0, 0, width, height).data;
+    const points = [];
+    // 减小采样步长 (isMobile 3, PC 2)，确保文字可见
+    const step = isMobile ? 3 : 2; 
 
-    function resize() {
-        dpr = window.devicePixelRatio || 1;
-        width = window.innerWidth;
-        height = window.innerHeight;
-
-        // 物理像素适配，解决模糊问题
-        canvas.width = width * dpr;
-        canvas.height = height * dpr;
-        ctx.scale(dpr, dpr);
-    }
-
-    window.addEventListener('resize', resize);
-    resize();
-
-    // -----------------------------------------------------------
-    // 1. 文字坐标获取 (适配移动端字号)
-    // -----------------------------------------------------------
-    function getTextCoordinates(text, fontSizeMultiplier) {
-        const tempCanvas = document.createElement('canvas');
-        const tCtx = tempCanvas.getContext('2d');
-
-        // 根据屏幕宽度动态计算字号
-        const dynamicFontSize = Math.min(width * 0.25, height * 0.15) * fontSizeMultiplier;
-
-        tempCanvas.width = width;
-        tempCanvas.height = height;
-
-        tCtx.textAlign = 'center';
-        tCtx.textBaseline = 'middle';
-
-        // 针对 iOS 和安卓的字体适配
-        tCtx.font = `bold ${dynamicFontSize}px "STXingkai", "Xingkai SC", "Kaiti SC", "KaiTi", serif`;
-        tCtx.fillStyle = '#fff';
-        tCtx.fillText(text, width / 2, height / 2);
-
-        const imgData = tCtx.getImageData(0, 0, width, height).data;
-        const points = [];
-
-        // 移动端加大采样步长以提升性能
-        const step = isMobile ? 3 : 2;
-
-        for (let y = 0; y < height; y += step) {
-            for (let x = 0; x < width; x += step) {
-                const alpha = imgData[(y * width + x) * 4 + 3];
-                if (alpha > 128) {
-                    const color = CONFIG.pinkPalette[Math.floor(Math.random() * CONFIG.pinkPalette.length)];
-                    points.push({
-                        x: x - width / 2,
-                        y: y - height / 2,
-                        z: (Math.random() - 0.5) * 10,
-                        color: color
-                    });
-                }
-            }
-        }
-
-        // 洗牌并截取
-        return points.sort(() => Math.random() - 0.5).slice(0, CONFIG.particleCount);
-    }
-
-    // -----------------------------------------------------------
-    // 2. 粒子类
-    // -----------------------------------------------------------
-    class Particle {
-        constructor() {
-            this.x = (Math.random() - 0.5) * width;
-            this.y = (Math.random() - 0.5) * height;
-            this.z = (Math.random() - 0.5) * 1000;
-            this.tx = 0; this.ty = 0; this.tz = 0;
-            this.color = '#fff';
-            this.baseSize = CONFIG.particleSize;
-            this.flashOffset = Math.random() * Math.PI * 2;
-            this.alpha = 0;
-            this.tAlpha = 0;
-        }
-
-        update() {
-            this.x += (this.tx - this.x) * currentTransitionSpeed;
-            this.y += (this.ty - this.y) * currentTransitionSpeed;
-            this.z += (this.tz - this.z) * currentTransitionSpeed;
-            this.alpha += (this.tAlpha - this.alpha) * 0.1;
-        }
-
-        draw(ctx, centerX, centerY) {
-            if (this.alpha < 0.01) return;
-            const scale = CONFIG.focalLength / (CONFIG.focalLength + this.z);
-            if (scale < 0) return;
-
-            const screenX = this.x * scale + centerX;
-            const screenY = this.y * scale + centerY;
-
-            const shimmer = Math.sin(Date.now() * 0.003 + this.flashOffset);
-            const size = this.baseSize * scale * (1.0 + shimmer * 0.2);
-
-            ctx.globalAlpha = this.alpha;
-            ctx.fillStyle = this.color;
-            ctx.beginPath();
-            // 移动端画矩形比画圆更省性能，但在高分屏下圆圈更美观，这里保留圆
-            ctx.arc(screenX, screenY, size, 0, Math.PI * 2);
-            ctx.fill();
-        }
-    }
-
-    // -----------------------------------------------------------
-    // 3. 烟花系统
-    // -----------------------------------------------------------
-    class Firework {
-        constructor() {
-            this.x = Math.random() * width;
-            this.y = height;
-            this.targetY = height * 0.2 + Math.random() * height * 0.4;
-            this.vx = (Math.random() - 0.5) * 2;
-            this.vy = -(isMobile ? 10 : 13) - Math.random() * 5;
-            this.hue = [330, 300, 45, 200][Math.floor(Math.random()*4)];
-            this.dead = false;
-        }
-        update() {
-            this.x += this.vx;
-            this.y += this.vy;
-            this.vy += 0.15;
-            if (this.vy >= 0 || this.y <= this.targetY) {
-                this.explode();
-                this.dead = true;
-            }
-        }
-        draw(ctx) {
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = `hsl(${this.hue}, 80%, 75%)`;
-            ctx.beginPath();
-            ctx.moveTo(this.x, this.y);
-            ctx.lineTo(this.x - this.vx, this.y - this.vy);
-            ctx.stroke();
-        }
-        explode() {
-            const count = isMobile ? 60 : 120; // 减少移动端碎片
-            for (let i = 0; i < count; i++) {
-                sparks.push(new Spark(this.x, this.y, this.hue));
+    for (let y = 0; y < height; y += step) {
+        for (let x = 0; x < width; x += step) {
+            const alpha = imgData[(y * width + x) * 4 + 3];
+            if (alpha > 120) {
+                points.push({
+                    x: x - width / 2,
+                    y: y - height / 2,
+                    color: CONFIG.pinkPalette[Math.floor(Math.random() * CONFIG.pinkPalette.length)]
+                });
             }
         }
     }
+    // 打乱顺序并限制数量
+    return points.sort(() => Math.random() - 0.5).slice(0, CONFIG.particleCount);
+}
 
-    class Spark {
-        constructor(x, y, hue) {
-            this.x = x; this.y = y;
-            this.oldX = x; this.oldY = y;
+class Particle {
+    constructor() {
+        this.x = (Math.random() - 0.5) * width;
+        this.y = (Math.random() - 0.5) * height;
+        this.z = (Math.random() - 0.5) * 500;
+        this.tx = this.x; this.ty = this.y; this.tz = this.z;
+        this.color = '#fff';
+        this.alpha = 0;
+        this.tAlpha = 0;
+    }
+    update() {
+        const speed = 0.08;
+        this.x += (this.tx - this.x) * speed;
+        this.y += (this.ty - this.y) * speed;
+        this.z += (this.tz - this.z) * speed;
+        this.alpha += (this.tAlpha - this.alpha) * 0.1;
+    }
+    draw() {
+        if (this.alpha < 0.05) return;
+        const scale = CONFIG.focalLength / (CONFIG.focalLength + this.z);
+        const sX = this.x * scale + (width / 2);
+        const sY = this.y * scale + (height / 2);
+        
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(sX, sY, CONFIG.particleSize * scale, CONFIG.particleSize * scale);
+    }
+}
+
+class Firework {
+    constructor() {
+        this.x = Math.random() * width;
+        this.y = height;
+        this.targetY = height * 0.1 + Math.random() * height * 0.25;
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = -(isMobile ? 11 : 14) - Math.random() * 4;
+        this.hue = Math.random() * 360;
+        this.dead = false;
+    }
+    update() {
+        this.x += this.vx; this.y += this.vy;
+        this.vy += 0.15;
+        if (this.vy >= 0 || this.y <= this.targetY) {
+            this.explode();
+            this.dead = true;
+        }
+    }
+    draw() {
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = `hsl(${this.hue}, 100%, 75%)`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y);
+        ctx.lineTo(this.x - this.vx, this.y - this.vy);
+        ctx.stroke();
+    }
+    explode() {
+        const count = isMobile ? 80 : 150;
+        const colorBase = Math.random() > 0.4 ? this.hue : 330; 
+        for (let i = 0; i < count; i++) sparks.push(new Spark(this.x, this.y, colorBase));
+    }
+}
+
+class Spark {
+    constructor(x, y, hue) {
+        this.x = x; this.y = y; this.px = x; this.py = y;
+        const angle = Math.random() * Math.PI * 2;
+        const force = Math.random() * (isMobile ? 7 : 11) + 2;
+        this.vx = Math.cos(angle) * force;
+        this.vy = Math.sin(angle) * force;
+        this.hue = hue + (Math.random() - 0.5) * 40;
+        this.alpha = 1;
+        this.decay = 0.012 + Math.random() * 0.015;
+        this.gravity = 0.1 + Math.random() * 0.1;
+    }
+    update() {
+        this.px = this.x; this.py = this.y;
+        this.vx *= CONFIG.friction;
+        this.vy *= CONFIG.friction;
+        this.vy += this.gravity;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.alpha -= this.decay;
+    }
+    draw() {
+        if (this.alpha <= 0) return;
+        ctx.globalAlpha = this.alpha;
+        ctx.strokeStyle = `hsl(${this.hue}, 100%, 70%)`;
+        ctx.lineWidth = this.alpha * 2;
+        ctx.beginPath();
+        ctx.moveTo(this.px, this.py);
+        ctx.lineTo(this.x, this.y);
+        ctx.stroke();
+    }
+}
+
+// 初始化粒子
+for (let i = 0; i < CONFIG.particleCount; i++) particles.push(new Particle());
+
+function morph(content, fontSizeMultiplier) {
+    const points = content ? getTextCoordinates(content, fontSizeMultiplier) : [];
+    
+    // 如果没有采到点，强制停止所有粒子显示（防止旧文字残留）
+    for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        if (i < points.length) {
+            p.tx = points[i].x;
+            p.ty = points[i].y;
+            p.tz = (Math.random() - 0.5) * 20;
+            p.color = points[i].color;
+            p.tAlpha = 1;
+        } else {
             const angle = Math.random() * Math.PI * 2;
-            const speed = Math.random() * (isMobile ? 6 : 9) + 2;
-            this.vx = Math.cos(angle) * speed;
-            this.vy = Math.sin(angle) * speed;
-            this.color = `hsl(${hue + (Math.random()-0.5)*30}, 90%, 70%)`;
-            this.alpha = 1;
-            this.decay = 0.015 + Math.random() * 0.015;
-        }
-        update() {
-            this.oldX = this.x; this.oldY = this.y;
-            this.vx *= CONFIG.friction;
-            this.vy *= CONFIG.friction;
-            this.vy += CONFIG.gravity;
-            this.x += this.vx;
-            this.y += this.vy;
-            this.alpha -= this.decay;
-        }
-        draw(ctx) {
-            if(this.alpha <= 0) return;
-            ctx.lineWidth = 1.5;
-            ctx.strokeStyle = this.color;
-            ctx.globalAlpha = this.alpha;
-            ctx.beginPath();
-            ctx.moveTo(this.oldX, this.oldY);
-            ctx.lineTo(this.x, this.y);
-            ctx.stroke();
+            const r = width * 0.8;
+            p.tx = Math.cos(angle) * r;
+            p.ty = Math.sin(angle) * r;
+            p.tAlpha = 0;
         }
     }
+}
 
-    // -----------------------------------------------------------
-    // 4. 流程控制
-    // -----------------------------------------------------------
-    for (let i = 0; i < CONFIG.particleCount; i++) {
-        particles.push(new Particle());
+function launchBarrage(n) {
+    if (stopAllFireworks) return;
+    for(let i=0; i<n; i++) setTimeout(() => fireworks.push(new Firework()), i * 150);
+}
+
+function startCelebration() {
+    morph("2026", 1.8);
+    launchBarrage(isMobile ? 3 : 6); 
+    setTimeout(() => { morph("新年快乐", 1.3); launchBarrage(isMobile ? 3 : 6); }, 3500);
+    setTimeout(() => { morph("祝我们都如愿", 1.3); launchBarrage(isMobile ? 4 : 8); }, 7000);
+    setTimeout(() => {
+        morph("", 0);
+        CONFIG.fireworkChance = isMobile ? 0.2 : 0.35;
+        const barrageTimer = setInterval(() => launchBarrage(isMobile ? 2 : 4), 1500);
+        setTimeout(() => { 
+            clearInterval(barrageTimer); 
+            CONFIG.fireworkChance = 0; 
+            stopAllFireworks = true; 
+        }, 5000);
+    }, 10500);
+}
+
+function animate() {
+    // 确保背景清理不会影响后续绘制
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#030001';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.globalCompositeOperation = 'lighter';
+    if(!stopAllFireworks && Math.random() < CONFIG.fireworkChance) fireworks.push(new Firework());
+
+    for (let i = fireworks.length - 1; i >= 0; i--) {
+        fireworks[i].update(); fireworks[i].draw();
+        if (fireworks[i].dead) fireworks.splice(i, 1);
+    }
+    for (let i = sparks.length - 1; i >= 0; i--) {
+        sparks[i].update(); sparks[i].draw();
+        if (sparks[i].alpha <= 0) sparks.splice(i, 1);
     }
 
-    function morph(content, fontSizeMultiplier, speed = 0.1) {
-        currentTransitionSpeed = speed;
-        let points = content ? getTextCoordinates(content, fontSizeMultiplier) : [];
-
-        particles.forEach((p, i) => {
-            if (i < points.length) {
-                p.tx = points[i].x;
-                p.ty = points[i].y;
-                p.tz = points[i].z;
-                p.color = points[i].color;
-                p.tAlpha = 1;
-            } else {
-                const angle = Math.random() * Math.PI * 2;
-                const r = width;
-                p.tx = Math.cos(angle) * r;
-                p.ty = Math.sin(angle) * r;
-                p.tAlpha = 0;
-            }
-        });
+    // 绘制文字粒子前重置混合模式
+    ctx.globalCompositeOperation = 'source-over';
+    for (let i = 0; i < particles.length; i++) {
+        particles[i].update();
+        particles[i].draw();
     }
 
-    function launchBarrage(n) {
-        for(let i=0; i<n; i++) setTimeout(() => fireworks.push(new Firework()), i*60);
+    requestAnimationFrame(animate);
+}
+
+// 启动
+animate();
+
+// 倒计时逻辑
+let count = 10;
+morph(count.toString(), 2.2);
+const timer = setInterval(() => {
+    count--;
+    if (count >= 1) {
+        morph(count.toString(), 2.2);
+        if(count <= 3) launchBarrage(1);
+    } else {
+        clearInterval(timer);
+        startCelebration();
     }
-
-    async function timeline() {
-        let count = 10;
-        // 1. 倒计时 (字号倍率较大)
-        morph(count.toString(), 2.5, 0.2);
-
-        const timer = setInterval(() => {
-            count--;
-            if (count >= 1) {
-                morph(count.toString(), 2.5, 0.2);
-                if(count % 2 === 0) launchBarrage(3);
-            } else {
-                clearInterval(timer);
-                startCelebration();
-            }
-        }, 1000);
-    }
-
-    function startCelebration() {
-        // 1. 显示 "2026"
-        morph("2026", 2.0, 0.1);
-        launchBarrage(isMobile ? 8 : 15);
-
-        // 2. 3.5秒后显示 "新年快乐"
-        setTimeout(() => {
-            morph("新年快乐", 1.5, 0.1);
-            launchBarrage(isMobile ? 6 : 10);
-        }, 3500);
-
-        // 3. 7秒后显示 "祝我们都如愿"
-        setTimeout(() => {
-            morph("祝我们都如愿", 1.5, 0.1);
-            launchBarrage(isMobile ? 8 : 12);
-        }, 7000);
-
-        // 4. 11秒后进入“终章狂欢” (持续5秒)
-        setTimeout(() => {
-            // 文字粒子散开消失
-            morph("", 0, 0.05);
-
-            // 开启高频烟花模式
-            CONFIG.fireworkChance = isMobile ? 0.2 : 0.4;
-
-            // 每隔1.2秒发射一次大齐射
-            const barrageTimer = setInterval(() => {
-                launchBarrage(Math.floor(Math.random() * 5 + 5));
-            }, 1200);
-
-            // 【关键修改】：5秒后停止所有发射逻辑
-            setTimeout(() => {
-                clearInterval(barrageTimer); // 停止齐射定时器
-                CONFIG.fireworkChance = 0;   // 停止随机烟花产生
-                console.log("Animation sequence finished to save memory.");
-            }, 5000); // 这里的 5000 即为狂欢持续时间（毫秒）
-
-        }, 11000);
-    }
-    // -----------------------------------------------------------
-    // 5. 渲染循环
-    // -----------------------------------------------------------
-    function animate() {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.fillStyle = 'rgba(5, 0, 2, 0.25)';
-        ctx.fillRect(0, 0, width, height);
-
-        ctx.globalCompositeOperation = 'lighter';
-        if(Math.random() < CONFIG.fireworkChance) fireworks.push(new Firework());
-
-        fireworks.forEach((f,i) => {
-            f.update(); f.draw(ctx);
-            if(f.dead) fireworks.splice(i,1);
-        });
-        sparks.forEach((s,i) => {
-            s.update(); s.draw(ctx);
-            if(s.alpha<=0) sparks.splice(i,1);
-        });
-
-        ctx.globalCompositeOperation = 'source-over';
-        const sceneRotationY = Math.sin(Date.now() * 0.0005) * 0.1;
-        const cos = Math.cos(sceneRotationY);
-        const sin = Math.sin(sceneRotationY);
-
-        const renderList = [];
-        const centerX = width / 2;
-        const centerY = height / 2;
-
-        for (let i = 0; i < particles.length; i++) {
-            const p = particles[i];
-            p.update();
-            if (p.alpha < 0.01) continue;
-
-            const x1 = p.x * cos - p.z * sin;
-            const z1 = p.z * cos + p.x * sin;
-
-            const scale = CONFIG.focalLength / (CONFIG.focalLength + z1);
-            p._screenX = x1 * scale + centerX;
-            p._screenY = p.y * scale + centerY;
-            p._z = z1;
-            p._scale = scale;
-            renderList.push(p);
-        }
-
-        // Z-Buffer 排序保证透视正确
-        renderList.sort((a, b) => b._z - a._z);
-        renderList.forEach(p => {
-            ctx.globalAlpha = p.alpha;
-            const size = p.baseSize * p._scale;
-            ctx.fillStyle = p.color;
-            ctx.beginPath();
-            ctx.arc(p._screenX, p._screenY, size, 0, Math.PI * 2);
-            ctx.fill();
-        });
-
-        requestAnimationFrame(animate);
-    }
-
-    // 启动
-    animate();
-    // 稍微延迟启动，确保移动端浏览器布局完成
-    setTimeout(timeline, 500);
-
+}, 1000);
 </script>
 </body>
 </html>
