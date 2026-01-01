@@ -2,42 +2,107 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>2026 跨年 延迟版 wgj</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>2026 跨年 - 粉黛流芳</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #030001; touch-action: none; }
-        canvas { display: block; width: 100vw; height: 100vh; }
+        :root {
+            --pink: #FFB6C1;
+        }
+        * { -webkit-tap-highlight-color: transparent; }
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #030001; overflow: hidden;
+            font-family: -apple-system, "PingFang SC", "STKaiti", serif;
+        }
+        canvas { 
+            display: block; width: 100%; height: 100dvh; 
+        }
+
+        /* 覆盖层：确保在所有内容之上 */
+        #ui-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            background: #030001; /* 纯黑背景防止穿透 */
+            z-index: 9999; /* 极高层级 */
+            transition: opacity 0.6s ease;
+        }
+
+        /* 醒目的全屏/启动按钮 */
+        #start-btn {
+            position: relative;
+            padding: 18px 45px;
+            font-size: 22px;
+            font-weight: 300;
+            color: var(--pink);
+            background: transparent;
+            border: 1.5px solid var(--pink);
+            border-radius: 40px;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(255, 182, 193, 0.2);
+            -webkit-appearance: none; /* 清除iOS默认样式 */
+        }
+
+        #start-btn:active {
+            transform: scale(0.92);
+            background: rgba(255, 182, 193, 0.1);
+        }
+
+        #hint-text {
+            color: #F8C3CD;
+            margin-top: 25px;
+            font-size: 14px;
+            letter-spacing: 1px;
+            opacity: 0.8;
+            text-align: center;
+        }
+
+        .hidden { 
+            opacity: 0 !important; 
+            pointer-events: none; 
+        }
     </style>
 </head>
 <body>
+
+    <!-- 启动层 -->
+    <div id="ui-overlay">
+        <button id="start-btn">点击开启全屏体验</button>
+        <div id="hint-text">2026 · 粉黛流芳</div>
+    </div>
+
     <canvas id="canvas"></canvas>
 
 <script>
 /**
- * 2026 跨年粒子特效 - 修复文字可见性 & 增强烟花版
+ * 2026 跨年粒子特效 - iOS Safari 深度优化版
  */
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d', { alpha: false });
+const overlay = document.getElementById('ui-overlay');
+const startBtn = document.getElementById('start-btn');
 
 let width, height, dpr;
 let particles = [];
 let fireworks = [];
 let sparks = [];
+let animationActive = false;
 
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
+// 粒子配置
 const CONFIG = {
-    // 稍微增加粒子数量保证文字清晰
-    particleCount: isMobile ? 2500 : 5000, 
-    particleSize: isMobile ? 1.6 : 2,
+    particleCount: isMobile ? 2200 : 5000, 
+    particleSize: 1.8,
     focalLength: 400,
     pinkPalette: ['#FFB6C1', '#FFC0CB', '#FFE4E1', '#FFF0F5', '#F8C3CD', '#FFFFFF'],
     fireworkChance: 0.05,
     gravity: 0.12,
     friction: 0.96,
 };
-
-let stopAllFireworks = false;
 
 function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -47,46 +112,41 @@ function resize() {
     canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
 }
+
 window.addEventListener('resize', resize);
 resize();
 
-// --- 修复后的采样逻辑 ---
-function getTextCoordinates(text, fontSizeMultiplier) {
-    const tempCanvas = document.createElement('canvas');
-    const tCtx = tempCanvas.getContext('2d');
+// 文字离屏采样
+function getTextPoints(text, sizeScale) {
+    const tCanvas = document.createElement('canvas');
+    const tCtx = tCanvas.getContext('2d');
+    const fSize = Math.min(width * 0.25, height * 0.15) * sizeScale;
     
-    // 增大字号基准，确保文字足够粗，不会被采样跳过
-    const dynamicFontSize = Math.min(width * 0.25, height * 0.15) * fontSizeMultiplier;
-    
-    tempCanvas.width = width;
-    tempCanvas.height = height;
-    
+    tCanvas.width = width;
+    tCanvas.height = height;
     tCtx.textAlign = 'center';
     tCtx.textBaseline = 'middle';
-    // 强制使用粗体，保证采样成功率
-    tCtx.font = `bold ${dynamicFontSize}px "STXingkai", "Xingkai SC", "Kaiti SC", "KaiTi", serif`; 
+    // 适配 iOS 字体
+    tCtx.font = `bold ${fSize}px "PingFang SC", "STKaiti", "Kaiti SC", "KaiTi", serif`; 
     tCtx.fillStyle = '#fff';
     tCtx.fillText(text, width / 2, height / 2);
 
-    const imgData = tCtx.getImageData(0, 0, width, height).data;
-    const points = [];
-    // 减小采样步长 (isMobile 3, PC 2)，确保文字可见
+    const data = tCtx.getImageData(0, 0, width, height).data;
+    const pts = [];
     const step = isMobile ? 3 : 2; 
 
     for (let y = 0; y < height; y += step) {
         for (let x = 0; x < width; x += step) {
-            const alpha = imgData[(y * width + x) * 4 + 3];
-            if (alpha > 120) {
-                points.push({
+            if (data[(y * width + x) * 4 + 3] > 128) {
+                pts.push({
                     x: x - width / 2,
                     y: y - height / 2,
-                    color: CONFIG.pinkPalette[Math.floor(Math.random() * CONFIG.pinkPalette.length)]
+                    c: CONFIG.pinkPalette[Math.floor(Math.random() * CONFIG.pinkPalette.length)]
                 });
             }
         }
     }
-    // 打乱顺序并限制数量
-    return points.sort(() => Math.random() - 0.5).slice(0, CONFIG.particleCount);
+    return pts.sort(() => Math.random() - 0.5).slice(0, CONFIG.particleCount);
 }
 
 class Particle {
@@ -95,26 +155,21 @@ class Particle {
         this.y = (Math.random() - 0.5) * height;
         this.z = (Math.random() - 0.5) * 500;
         this.tx = this.x; this.ty = this.y; this.tz = this.z;
-        this.color = '#fff';
-        this.alpha = 0;
-        this.tAlpha = 0;
+        this.color = '#fff'; this.alpha = 0; this.tAlpha = 0;
     }
     update() {
-        const speed = 0.08;
-        this.x += (this.tx - this.x) * speed;
-        this.y += (this.ty - this.y) * speed;
-        this.z += (this.tz - this.z) * speed;
+        const s = 0.08;
+        this.x += (this.tx - this.x) * s;
+        this.y += (this.ty - this.y) * s;
+        this.z += (this.tz - this.z) * s;
         this.alpha += (this.tAlpha - this.alpha) * 0.1;
     }
     draw() {
         if (this.alpha < 0.05) return;
         const scale = CONFIG.focalLength / (CONFIG.focalLength + this.z);
-        const sX = this.x * scale + (width / 2);
-        const sY = this.y * scale + (height / 2);
-        
         ctx.globalAlpha = this.alpha;
         ctx.fillStyle = this.color;
-        ctx.fillRect(sX, sY, CONFIG.particleSize * scale, CONFIG.particleSize * scale);
+        ctx.fillRect(this.x * scale + width/2, this.y * scale + height/2, CONFIG.particleSize * scale, CONFIG.particleSize * scale);
     }
 }
 
@@ -123,8 +178,8 @@ class Firework {
         this.x = Math.random() * width;
         this.y = height;
         this.targetY = height * 0.1 + Math.random() * height * 0.25;
-        this.vx = (Math.random() - 0.5) * 2;
-        this.vy = -(isMobile ? 11 : 14) - Math.random() * 4;
+        this.vx = (Math.random() - 0.5) * 3;
+        this.vy = -(isMobile ? 11 : 15) - Math.random() * 5;
         this.hue = Math.random() * 360;
         this.dead = false;
     }
@@ -146,38 +201,35 @@ class Firework {
         ctx.stroke();
     }
     explode() {
-        const count = isMobile ? 80 : 150;
-        const colorBase = Math.random() > 0.4 ? this.hue : 330; 
-        for (let i = 0; i < count; i++) sparks.push(new Spark(this.x, this.y, colorBase));
+        const count = isMobile ? 70 : 150;
+        const hue = Math.random() > 0.4 ? this.hue : 330; 
+        for (let i = 0; i < count; i++) sparks.push(new Spark(this.x, this.y, hue));
     }
 }
 
 class Spark {
-    constructor(x, y, hue) {
+    constructor(x, y, h) {
         this.x = x; this.y = y; this.px = x; this.py = y;
-        const angle = Math.random() * Math.PI * 2;
-        const force = Math.random() * (isMobile ? 7 : 11) + 2;
-        this.vx = Math.cos(angle) * force;
-        this.vy = Math.sin(angle) * force;
-        this.hue = hue + (Math.random() - 0.5) * 40;
+        const ang = Math.random() * Math.PI * 2;
+        const f = Math.random() * (isMobile ? 8 : 12) + 2;
+        this.vx = Math.cos(ang) * f;
+        this.vy = Math.sin(ang) * f;
+        this.h = h + (Math.random() - 0.5) * 40;
         this.alpha = 1;
-        this.decay = 0.012 + Math.random() * 0.015;
-        this.gravity = 0.1 + Math.random() * 0.1;
+        this.decay = 0.01 + Math.random() * 0.015;
     }
     update() {
         this.px = this.x; this.py = this.y;
-        this.vx *= CONFIG.friction;
-        this.vy *= CONFIG.friction;
-        this.vy += this.gravity;
-        this.x += this.vx;
-        this.y += this.vy;
+        this.vx *= CONFIG.friction; this.vy *= CONFIG.friction;
+        this.vy += 0.1;
+        this.x += this.vx; this.y += this.vy;
         this.alpha -= this.decay;
     }
     draw() {
         if (this.alpha <= 0) return;
         ctx.globalAlpha = this.alpha;
-        ctx.strokeStyle = `hsl(${this.hue}, 100%, 70%)`;
-        ctx.lineWidth = this.alpha * 2;
+        ctx.strokeStyle = `hsl(${this.h}, 100%, 70%)`;
+        ctx.lineWidth = this.alpha * 2.5;
         ctx.beginPath();
         ctx.moveTo(this.px, this.py);
         ctx.lineTo(this.x, this.y);
@@ -185,62 +237,57 @@ class Spark {
     }
 }
 
-// 初始化粒子
+// 核心控制
 for (let i = 0; i < CONFIG.particleCount; i++) particles.push(new Particle());
 
-function morph(content, fontSizeMultiplier) {
-    const points = content ? getTextCoordinates(content, fontSizeMultiplier) : [];
-    
-    // 如果没有采到点，强制停止所有粒子显示（防止旧文字残留）
+function morph(txt, size) {
+    const pts = txt ? getTextPoints(txt, size) : [];
     for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
-        if (i < points.length) {
-            p.tx = points[i].x;
-            p.ty = points[i].y;
-            p.tz = (Math.random() - 0.5) * 20;
-            p.color = points[i].color;
-            p.tAlpha = 1;
+        if (i < pts.length) {
+            p.tx = pts[i].x; p.ty = pts[i].y; p.tz = (Math.random()-0.5)*20;
+            p.color = pts[i].c; p.tAlpha = 1;
         } else {
-            const angle = Math.random() * Math.PI * 2;
-            const r = width * 0.8;
-            p.tx = Math.cos(angle) * r;
-            p.ty = Math.sin(angle) * r;
-            p.tAlpha = 0;
+            const a = Math.random() * Math.PI * 2;
+            p.tx = Math.cos(a) * width; p.ty = Math.sin(a) * height; p.tAlpha = 0;
         }
     }
 }
 
-function launchBarrage(n) {
-    if (stopAllFireworks) return;
+function launch(n) {
     for(let i=0; i<n; i++) setTimeout(() => fireworks.push(new Firework()), i * 150);
 }
 
-function startCelebration() {
-    morph("2026", 1.8);
-    launchBarrage(isMobile ? 3 : 6); 
-    setTimeout(() => { morph("新年快乐", 1.3); launchBarrage(isMobile ? 3 : 6); }, 3500);
-    setTimeout(() => { morph("万事胜意", 1.3); launchBarrage(isMobile ? 4 : 8); }, 7000);
-    setTimeout(() => {
-        morph("", 0);
-        CONFIG.fireworkChance = isMobile ? 0.2 : 0.35;
-        const barrageTimer = setInterval(() => launchBarrage(isMobile ? 2 : 4), 1500);
-        setTimeout(() => { 
-            clearInterval(barrageTimer); 
-            CONFIG.fireworkChance = 0; 
-            stopAllFireworks = true; 
-        }, 5000);
-    }, 10500);
+function startTimeline() {
+    let count = 10;
+    const timer = setInterval(() => {
+        if(count >= 1) {
+            morph(count.toString(), 2.2);
+            if(count <= 3) launch(1);
+        } else {
+            clearInterval(timer);
+            morph("2026", 1.8); launch(3);
+            setTimeout(() => { morph("新年快乐", 1.3); launch(3); }, 3500);
+            setTimeout(() => { morph("万事胜意", 1.3); launch(4); }, 7000);
+            setTimeout(() => {
+                morph("", 0);
+                CONFIG.fireworkChance = isMobile ? 0.2 : 0.35;
+                const loop = setInterval(() => launch(isMobile ? 2 : 4), 1600);
+                setTimeout(() => { clearInterval(loop); CONFIG.fireworkChance = 0; }, 6000);
+            }, 10500);
+        }
+        count--;
+    }, 1000);
 }
 
 function animate() {
-    // 确保背景清理不会影响后续绘制
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 0.18;
     ctx.fillStyle = '#030001';
     ctx.fillRect(0, 0, width, height);
 
     ctx.globalCompositeOperation = 'lighter';
-    if(!stopAllFireworks && Math.random() < CONFIG.fireworkChance) fireworks.push(new Firework());
+    if(animationActive && Math.random() < CONFIG.fireworkChance) fireworks.push(new Firework());
 
     for (let i = fireworks.length - 1; i >= 0; i--) {
         fireworks[i].update(); fireworks[i].draw();
@@ -251,33 +298,33 @@ function animate() {
         if (sparks[i].alpha <= 0) sparks.splice(i, 1);
     }
 
-    // 绘制文字粒子前重置混合模式
     ctx.globalCompositeOperation = 'source-over';
     for (let i = 0; i < particles.length; i++) {
-        particles[i].update();
-        particles[i].draw();
+        particles[i].update(); particles[i].draw();
     }
-
     requestAnimationFrame(animate);
 }
 
-// 启动
-animate();
+// 启动监听
+startBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // 尝试进入全屏（针对 iPad/Android）
+    if (canvas.requestFullscreen) canvas.requestFullscreen();
+    else if (canvas.webkitRequestFullscreen) canvas.webkitRequestFullscreen();
 
-// 倒计时逻辑
-let count = 10;
-morph(count.toString(), 2.2);
-const timer = setInterval(() => {
-    count--;
-    if (count >= 1) {
-        morph(count.toString(), 2.2);
-        if(count <= 3) launchBarrage(1);
-    } else {
-        clearInterval(timer);
-        startCelebration();
-    }
-}, 1000);
+    overlay.classList.add('hidden');
+    animationActive = true;
+    
+    // 延迟一点启动，让 iOS 状态栏收起
+    setTimeout(() => {
+        resize();
+        startTimeline();
+    }, 300);
+}, { once: true });
+
+animate();
 </script>
 </body>
 </html>
-
